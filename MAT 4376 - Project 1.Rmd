@@ -1,0 +1,399 @@
+---
+title: "Project 1- MAT 4376"
+author: "Farid Fouda"
+date: "2025-05-08"
+output: pdf_document
+---
+```{r}
+#Loading the Data and libraries
+Data= read.csv("polls_us_election_2016 (1).csv") 
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(usmap)
+library(zoo)
+library(lubridate)
+```
+
+```{r}
+#Initial Data Exploration
+Data
+dim(Data)
+unique(Data$startdate)
+```
+
+```{r}
+#Creating the Month variable to better create the visualizations.
+Data$enddate <- as.Date(Data$enddate, format= "%Y-%m-%d")
+Data$Month <- format(Data$enddate, "%Y-%m")
+unique(Data$Month)
+
+```
+
+```{r}
+#Creation of the monthly_avg dataset.
+monthly_avg <- Data %>%
+  filter(state == "U.S.") %>%
+  group_by(Month) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+monthly_avg
+```
+
+
+```{r}
+colnames(monthly_avg)[colnames(monthly_avg) == "adjpoll_clinton"] <- "Clinton"
+colnames(monthly_avg)[colnames(monthly_avg) == "adjpoll_trump"] <- "Trump"
+colnames(monthly_avg)[colnames(monthly_avg) == "adjpoll_johnson"] <- "Johnson"
+colnames(monthly_avg)[colnames(monthly_avg) == "adjpoll_mcmullin"] <- "McMullin"
+monthly_avg <- monthly_avg[, -ncol(monthly_avg)]
+monthly_avg$samplesize<-NULL
+monthly_avg$rawpoll_clinton<-NULL
+monthly_avg$rawpoll_trump<-NULL
+monthly_avg$rawpoll_johnson<-NULL
+monthly_avg$rawpoll_mcmullin<-NULL
+monthly_avg
+```
+
+```{r}
+#Dataset reduction of the monthly_avg using pivot_longer
+long_data <- pivot_longer(monthly_avg, 
+                          cols = -Month,
+                          names_to = "Candidate", 
+                          values_to = "Polling")
+
+#Plot using ggplot.
+ggplot(long_data, aes(x = Month, y = Polling, color = Candidate, group = Candidate)) +
+  geom_line(size = 1) +  
+  geom_point(size = 2) +  
+  scale_color_manual(values = c("Clinton" = "#56B4E9", "Trump" = "#FA2C00", "Johnson"= "#11915751")) +
+
+  labs(title = "Monthly Polling Averages by Candidate",
+       x = "Month",
+       y = "Polling (%)") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),          
+    panel.background = element_blank(),    
+    plot.background = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+long_data
+```
+
+
+
+```{r}
+#Creation of the Swing States data set. Creation of the enddates column for future visualizations.
+swing_states <- Data[Data$state %in% c("Pennsylvania", "Florida", "Arizona"), ]
+swing_states$enddate <- as.Date(swing_states$enddate, format= "%Y-%m-%d")
+swing_states$Month <- format(swing_states$enddate, "%Y-%m")
+swing_states <- swing_states[swing_states$Month %in% c("2016-03", "2016-11"), ]
+swing_states
+```
+
+
+```{r}
+#Average the polling in the Swing States.
+state_month_avg <- swing_states %>%
+  group_by(state, Month) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE), .groups = "drop")
+state_month_avg
+```
+
+
+
+```{r}
+#Reduce the dataset to only relevant columns.
+colnames(state_month_avg)[colnames(state_month_avg) == "adjpoll_clinton"] <- "Clinton"
+colnames(state_month_avg)[colnames(state_month_avg) == "adjpoll_trump"] <- "Trump"
+colnames(state_month_avg)[colnames(state_month_avg) == "adjpoll_johnson"] <- "Johnson"
+colnames(state_month_avg)[colnames(state_month_avg) == "adjpoll_mcmullin"] <- "McMullin"
+state_month_avg <- state_month_avg[,-c(3:7)]
+state_month_avg <- state_month_avg[,-c(5:6)]
+
+state_month_avg
+```
+
+```{r}
+#Consolidate the candidates into one column.
+long_data <- state_month_avg %>%
+  pivot_longer(cols = c(Clinton, Trump), names_to = "Candidate", values_to = "Polling")
+
+#Separate the polling into early and late to illustrate the change in polling.
+months <- sort(unique(long_data$Month))
+early_month <- months[1]
+late_month <- months[2]
+
+
+early <- long_data %>%
+  filter(Month == early_month) %>%
+  rename(Early_Polling = Polling) %>%
+  select(state, Candidate, Early_Polling)
+
+late <- long_data %>%
+  filter(Month == late_month) %>%
+  rename(Late_Polling = Polling)
+
+
+combined <- left_join(late, early, by = c("state", "Candidate"))
+combined
+
+#Plot using ggplot, colours represent party lines.
+ggplot(combined, aes(x = state, y = Late_Polling, fill = Candidate)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.6) +
+  geom_errorbar(aes(ymin = Early_Polling, ymax = Early_Polling),
+                position = position_dodge(width = 0.8),
+                width = 0.5, color = "black", size = 1) +
+    scale_fill_manual(values = c("Clinton" = "#56B4E9", "Trump" = "#FA2C00")) +
+  labs(
+       x = "", y = "Polling (%)") +
+  theme_minimal() +
+  theme(    panel.grid = element_blank(),
+    panel.background = element_blank(), 
+    plot.background = element_blank(),
+    axis.text.x = element_text(angle = 0, hjust = 1))
+```
+
+```{r}
+#Filter the polling into High Rated and Low Rated.
+
+Polls <- Data %>%
+  filter(state == "U.S.",
+         grade %in% c("A+", "A", "A-", "C", "C-", "D")) %>%
+  group_by(Month, grade) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE), .groups = "drop")
+```
+
+
+
+```{r}
+Polls <- Polls %>%
+  mutate(rating = case_when(
+    grade %in% c("A+", "A", "A-") ~ "High",
+    grade %in% c("C-", "C", "D") ~ "Low",
+  ))
+Polls$lead <- Polls[[8]] - Polls[[9]]
+Polls
+```
+
+
+
+```{r}
+#Reduce the Polls dataset into an average lead with the rating.
+monthly_avg_lead <- Polls %>%
+  group_by(Month,rating) %>%
+  summarise(avg_lead = mean(lead, na.rm = TRUE))
+monthly_avg_lead
+```
+
+```{r}
+#Plot the graph using the poll ratings.
+
+ggplot(monthly_avg_lead, aes(x = Month, y = avg_lead, color = rating, group = rating)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 0, color = "black", size = 0.8)+
+    scale_y_continuous(labels = abs) +
+  scale_color_manual(values = c("High" = "#1f78b4", "Low" = "#e31a1c"))+
+  labs(title = "",
+       x = "Month", y = "", color = "Poll Rating") +
+  theme_minimal()+
+  theme(panel.grid = element_blank(), 
+    panel.background = element_blank(),    
+    plot.background = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+#Obtain only National polls and create a distribution of the polling grades.
+nationalonly <- Data %>%
+  filter(state == "U.S.")
+nationalonly$grade_color <- ifelse(nationalonly$grade %in% c("C-", "C+"), "red", "skyblue")
+nationalonly$grade_color[is.na(nationalonly$grade)] <- "red"
+
+ggplot(nationalonly, aes(x = grade, fill = grade_color)) +
+  geom_bar(color = "black") +
+  scale_fill_identity() + 
+  labs(title = "", x = "Grade", y = "Count") +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_blank()
+  )
+```
+
+```{r}
+#Average the polling data across states for a geographic visualization.
+poll_data <- Data %>%
+  group_by(state) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE), .groups = "drop")
+poll_data
+```
+
+
+```{r}
+#Find the difference between Trump and Clinton's lead.
+state_margins <- poll_data %>%
+  group_by(state) %>%
+  summarise(
+    clinton_avg = mean(adjpoll_clinton, na.rm = TRUE),
+    trump_avg = mean(adjpoll_trump, na.rm = TRUE),
+    margin = clinton_avg - trump_avg  # Positive = Clinton lead, Negative = Trump lead
+  )
+```
+
+```{r}
+#Plot using the usmap library.
+plot_usmap(data = state_margins, values = "margin", color = "white") +
+scale_fill_gradient2(
+  low = "#d73027",     # Strong Trump (deep red)
+  mid = "#f7f7f7",     # Neutral (light gray, not pure white)
+  high = "#4575b4",    # Strong Clinton (deep blue)
+  midpoint = 0,
+  name = "Clinton vs Trump\nPolling Margin"
+)+
+  labs(title = "") +
+  theme(legend.position = "right")
+```
+```{r}
+#Calculate the mean sample size of the national polls.
+samplesizenat<-nationalonly %>%
+  group_by(Month) %>%
+  summarise(mean_samplesize = mean(samplesize, na.rm = TRUE))
+samplesizenat
+```
+
+```{r}
+#Illustrate the sample size on a month basis to show if it grew during the election period.
+samplesizenat$Month <- as.yearmon(samplesizenat$Month)
+
+
+samplesizenat <- samplesizenat %>%
+  mutate(period = ifelse(Month >= as.yearmon("2015-11") & Month <= as.yearmon("2016-03"),
+                         "highlight", "normal"))
+
+ggplot(samplesizenat, aes(x = Month, y = mean_samplesize, color = period, group = 1)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 0, color = "black", size = 0.8) +
+  scale_x_yearmon(breaks = samplesizenat$Month) +
+  scale_color_manual(values = c("highlight" = "#1f78b4", "normal" = "black")) +
+  labs(title = "", x = "Month", y = "", color = "Poll Rating") +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  )
+
+```
+
+
+```{r}
+#Average the polling for both candidates.
+pollster_means <- nationalonly %>%
+  group_by(pollster) %>%
+  summarise(mean_clinton = mean(adjpoll_clinton, na.rm = TRUE),
+            mean_trump = mean(adjpoll_trump, na.rm = TRUE))  # Only include pollsters with enough polls
+
+```
+```{r}
+#Find the minimums and maximums for the graph.
+min_val <- min(pollster_means$mean_clinton, pollster_means$mean_trump)
+max_x <- max(pollster_means$mean_trump)
+max_y <- max(pollster_means$mean_clinton)
+max_val <- max(max_x, max_y)
+
+#Graph each pollster by their averages for both candidates.
+ggplot(pollster_means, aes(x = mean_trump, y = mean_clinton, label = pollster)) +
+  geom_point() +
+  labs(title = "",
+       x = "Trump (%)", y = "Clinton (%)") +
+  coord_cartesian(xlim = c(min_val, max_val), ylim = c(min_val, max_val)) +
+  theme_minimal()
+```
+
+```{r}
+
+#Add a per-poll Clinton–Trump spread
+nationalonly <- nationalonly %>%
+  mutate(spread = adjpoll_clinton - adjpoll_trump)
+
+#Average that spread for each pollster
+pollster_diff <- nationalonly %>%
+  group_by(pollster) %>%
+  summarise(mean_spread = mean(spread, na.rm = TRUE),
+            n_polls     = n()) %>% 
+  ungroup() %>%
+  arrange(mean_spread)
+
+#Diverging horizontal bar chart
+ggplot(pollster_diff,
+       aes(x = reorder(pollster, mean_spread),     
+           y = mean_spread,
+           fill = mean_spread > 0)) +              # TRUE = Clinton lead, FALSE = Trump lead
+  geom_col(width = 0.7) +
+  coord_flip() +                                   
+  geom_hline(yintercept = 0, colour = "black") +   
+  scale_fill_manual(values = c("TRUE"  = "#1f78b4",  
+                               "FALSE" = "#d62728"),
+                    guide = "none") +              
+  labs(title = "",
+       x = "", y = "Average spread (percentage points)") +
+  theme_minimal() +
+  theme(panel.grid.major.y = element_blank(),
+        panel.grid.minor   = element_blank(),
+            axis.text.y = element_blank(),      
+    axis.ticks.y = element_blank()   )
+
+```
+
+
+```{r}
+#Reshape the data to long format
+nationalpolls_long <- nationalonly %>%
+  select(adjpoll_clinton, adjpoll_trump) %>%
+  pivot_longer(cols = everything(),
+               names_to = "candidate",
+               values_to = "adjusted_poll")
+
+#Clean up candidate names
+nationalpolls_long$candidate <- gsub("adjpoll_", "", nationalpolls_long$candidate)
+nationalpolls_long$candidate <- tools::toTitleCase(nationalpolls_long$candidate)
+
+ggplot(nationalpolls_long, aes(x = candidate, y = adjusted_poll, fill = candidate)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "",
+       x = "Candidate",
+       y = "Adjusted Polling (%)") +
+    scale_fill_manual(values = c(
+    "Clinton" = "blue",
+    "Trump" = "red"))+
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+#Combine the grading and sample size datasets.
+gradesample <- Data %>%
+  group_by(grade) %>%
+  summarise(mean_samplesize = mean(samplesize, na.rm = TRUE))
+  
+gradesample
+```
+
+```{r}
+#Graph the dataset.
+ggplot(gradesample, aes(x = grade, y = mean_samplesize)) + geom_col(fill = "steelblue") +
+  labs(title = "",
+       x = "Pollster Grade",
+       y = "Average Sample Size") +
+  theme_minimal() +
+  theme(legend.position = "none",  panel.grid.major.y = element_blank(),
+        panel.grid.minor   = element_blank())
+```
+
